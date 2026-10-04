@@ -155,9 +155,13 @@ def explain_finding(test: dict, response: str, failed: bool) -> str:
             temperature=0.3,
             max_tokens=200,
         )
-        return resp.choices[0].message.content
+        content = resp.choices[0].message.content
+        finish_reason = resp.choices[0].finish_reason
+        if not content:
+            return f"[explanation came back empty — finish_reason: {finish_reason}. Scorer verdict stands: FAILED on pattern '{test['fail_signal']}'.]"
+        return content
     except Exception as e:
-        return f"[explanation call failed: {e}]"
+        return f"[explanation call failed: {e}. Scorer verdict stands: FAILED on pattern '{test['fail_signal']}'.]"
 
 
 # ---------- UI ----------
