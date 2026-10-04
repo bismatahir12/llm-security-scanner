@@ -1,5 +1,5 @@
 """
-LLM Security Scanner - AI Security Auditor for LLM Applications
+SentinelScan - AI Security Auditor for LLM Applications
 MVP demo. Dummy login: admin / demo123
 """
 
@@ -24,7 +24,7 @@ if "authed" not in st.session_state:
     st.session_state.authed = False
 
 if not st.session_state.authed:
-    st.title("LLM Security Scanner")
+    st.title("🛡️ SentinelScan")
     st.caption("AI Security Auditor for LLM Applications")
     st.info("Demo credentials — username: **admin**  |  password: **demo123**")
     u = st.text_input("Username")
@@ -92,14 +92,18 @@ FALLBACK_TARGET_RESPONSES = {
 }
 
 
-def target_llm(test: dict) -> str:
-    """Calls the real target model. Falls back to a fixed response if no key is set,
-    so the app still runs end-to-end for local testing without a key."""
+TARGET_MODEL = "llama-3.1-8b-instant"  # widely available on free tier
+
+
+def target_llm(test: dict) -> tuple[str, bool]:
+    """Calls the real target model. Returns (response_text, call_succeeded).
+    Falls back to a fixed response if no key is set, so the app still runs
+    end-to-end for local testing without a key."""
     if not GROQ_AVAILABLE:
-        return FALLBACK_TARGET_RESPONSES.get(test["id"], "I can't help with that.")
+        return FALLBACK_TARGET_RESPONSES.get(test["id"], "I can't help with that."), True
     try:
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=TARGET_MODEL,
             messages=[
                 {"role": "system", "content": WEAK_SYSTEM_PROMPT},
                 {"role": "user", "content": test["prompt"]},
@@ -107,9 +111,9 @@ def target_llm(test: dict) -> str:
             temperature=0.3,
             max_tokens=200,
         )
-        return resp.choices[0].message.content
+        return resp.choices[0].message.content, True
     except Exception as e:
-        return f"[target call failed: {e}]"
+        return f"API call failed: {e}", False
 
 
 def score_response(test: dict, response: str) -> bool:
@@ -185,31 +189,57 @@ if st.button("▶ Run Security Scan", type="primary"):
     for i, test in enumerate(ATTACK_LIBRARY):
         progress.progress((i + 1) / len(ATTACK_LIBRARY), text=f"Running {test['id']}: {test['category']}")
         time.sleep(0.4)
-        response = target_llm(test)
+        response, call_ok = target_llm(test)
+
+        if not call_ok:
+            # The target call itself failed — this is neither PASS nor FAIL,
+            # it means the test did not actually run. Reporting this as PASS
+            # would be a false "secure" result, which is worse than no result.
+            results.append({
+                **test,
+                "response": response,
+                "status": "ERROR",
+                "explanation": "This test could not be completed because the target call failed. Fix the error before trusting any result for this test.",
+            })
+            continue
+
         failed = score_response(test, response)
         explanation = explain_finding(test, response, failed)
-        results.append({**test, "response": response, "failed": failed, "explanation": explanation})
+        results.append({
+            **test,
+            "response": response,
+            "status": "FAIL" if failed else "PASS",
+            "explanation": explanation,
+        })
 
     progress.empty()
     st.session_state.results = results
 
 if "results" in st.session_state:
     results = st.session_state.results
-    failed_count = sum(1 for r in results if r["failed"])
-    total = len(results)
-    risk_score = round((failed_count / total) * 100)
+    failed_count = sum(1 for r in results if r["status"] == "FAIL")
+    error_count = sum(1 for r in results if r["status"] == "ERROR")
+    completed = len(results) - error_count
+    risk_score = round((failed_count / completed) * 100) if completed else None
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Tests Run", total)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Tests Run", len(results))
     col2.metric("Vulnerabilities Found", failed_count)
-    col3.metric("Risk Score", f"{risk_score}%", delta=None)
+    col3.metric("Risk Score", f"{risk_score}%" if risk_score is not None else "N/A")
+    col4.metric("Errors (did not run)", error_count)
+
+    if error_count:
+        st.error(
+            f"{error_count} test(s) failed to execute against the target — "
+            f"these are NOT passes. Fix the underlying error before trusting this scan."
+        )
 
     st.markdown("---")
     st.subheader("Findings")
 
+    icons = {"PASS": "🟢 PASS", "FAIL": "🔴 FAIL", "ERROR": "⚠️ ERROR"}
     for r in results:
-        icon = "🔴 FAIL" if r["failed"] else "🟢 PASS"
-        with st.expander(f"{icon} — {r['id']} ({r['category']})"):
+        with st.expander(f"{icons[r['status']]} — {r['id']} ({r['category']})"):
             st.markdown(f"**Attack prompt:** `{r['prompt']}`")
             st.markdown(f"**Target response:** {r['response']}")
             st.markdown(f"**Assessment:** {r['explanation']}")
