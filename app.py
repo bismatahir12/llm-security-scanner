@@ -1,5 +1,5 @@
 """
-SentinelScan - AI Security Auditor for LLM Applications
+LLM Security Scanner- AI Security Auditor for LLM Applications
 MVP demo. Dummy login: admin / demo123
 """
 
