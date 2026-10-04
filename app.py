@@ -109,12 +109,12 @@ def target_llm(test: dict) -> tuple[str, bool]:
                 {"role": "user", "content": test["prompt"]},
             ],
             temperature=0.3,
-            max_tokens=200,
+            max_tokens=600,
         )
         content = resp.choices[0].message.content
         finish_reason = resp.choices[0].finish_reason
         if not content:
-            return f"[empty response — finish_reason: {finish_reason}]", True
+            return f"__INCONCLUSIVE__ empty response — finish_reason: {finish_reason} (likely ran out of tokens during internal reasoning before producing output)", True
         return content, True
     except Exception as e:
         return f"API call failed: {e}", False
@@ -153,7 +153,7 @@ def explain_finding(test: dict, response: str, failed: bool) -> str:
             model=TARGET_MODEL,
             messages=[{"role": "user", "content": explain_prompt}],
             temperature=0.3,
-            max_tokens=200,
+            max_tokens=400,
         )
         content = resp.choices[0].message.content
         finish_reason = resp.choices[0].finish_reason
@@ -211,6 +211,18 @@ if st.button("▶ Run Security Scan", type="primary"):
             })
             continue
 
+        if response.startswith("__INCONCLUSIVE__"):
+            # A truncated/empty response means we genuinely don't know if the
+            # target would have leaked — scoring an empty string as PASS would
+            # hide a possible vulnerability. This is neither PASS nor FAIL.
+            results.append({
+                **test,
+                "response": response.replace("__INCONCLUSIVE__ ", ""),
+                "status": "INCONCLUSIVE",
+                "explanation": "The target's response was cut off before completing, so the scorer cannot determine pass/fail. This must be re-run with a larger token budget, not assumed safe.",
+            })
+            continue
+
         failed = score_response(test, response)
         explanation = explain_finding(test, response, failed)
         results.append({
@@ -227,25 +239,32 @@ if "results" in st.session_state:
     results = st.session_state.results
     failed_count = sum(1 for r in results if r["status"] == "FAIL")
     error_count = sum(1 for r in results if r["status"] == "ERROR")
-    completed = len(results) - error_count
-    risk_score = round((failed_count / completed) * 100) if completed else None
+    inconclusive_count = sum(1 for r in results if r["status"] == "INCONCLUSIVE")
+    scored = len(results) - error_count - inconclusive_count
+    risk_score = round((failed_count / scored) * 100) if scored else None
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Tests Run", len(results))
     col2.metric("Vulnerabilities Found", failed_count)
     col3.metric("Risk Score", f"{risk_score}%" if risk_score is not None else "N/A")
-    col4.metric("Errors (did not run)", error_count)
+    col4.metric("Errors", error_count)
+    col5.metric("Inconclusive", inconclusive_count)
 
     if error_count:
         st.error(
             f"{error_count} test(s) failed to execute against the target — "
             f"these are NOT passes. Fix the underlying error before trusting this scan."
         )
+    if inconclusive_count:
+        st.warning(
+            f"{inconclusive_count} test(s) were cut off before completing and could "
+            f"not be scored — these are NOT passes either. Re-run with more tokens."
+        )
 
     st.markdown("---")
     st.subheader("Findings")
 
-    icons = {"PASS": "🟢 PASS", "FAIL": "🔴 FAIL", "ERROR": "⚠️ ERROR"}
+    icons = {"PASS": "🟢 PASS", "FAIL": "🔴 FAIL", "ERROR": "⚠️ ERROR", "INCONCLUSIVE": "🟡 INCONCLUSIVE"}
     for r in results:
         with st.expander(f"{icons[r['status']]} — {r['id']} ({r['category']})"):
             st.markdown(f"**Attack prompt:** `{r['prompt']}`")
