@@ -24,7 +24,7 @@ if "authed" not in st.session_state:
     st.session_state.authed = False
 
 if not st.session_state.authed:
-    st.title("🛡️ SentinelScan")
+    st.title("LLM Security Scanner")
     st.caption("AI Security Auditor for LLM Applications")
     st.info("Demo credentials — username: **admin**  |  password: **demo123**")
     u = st.text_input("Username")
