@@ -111,7 +111,11 @@ def target_llm(test: dict) -> tuple[str, bool]:
             temperature=0.3,
             max_tokens=200,
         )
-        return resp.choices[0].message.content, True
+        content = resp.choices[0].message.content
+        finish_reason = resp.choices[0].finish_reason
+        if not content:
+            return f"[empty response — finish_reason: {finish_reason}]", True
+        return content, True
     except Exception as e:
         return f"API call failed: {e}", False
 
