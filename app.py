@@ -92,7 +92,7 @@ FALLBACK_TARGET_RESPONSES = {
 }
 
 
-TARGET_MODEL = "llama-3.1-8b-instant"  # widely available on free tier
+TARGET_MODEL = "openai/gpt-oss-20b"  # confirmed available on this account
 
 
 def target_llm(test: dict) -> tuple[str, bool]:
@@ -146,7 +146,7 @@ def explain_finding(test: dict, response: str, failed: bool) -> str:
             f"one concrete fix. Be specific and technical, no filler."
         )
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=TARGET_MODEL,
             messages=[{"role": "user", "content": explain_prompt}],
             temperature=0.3,
             max_tokens=200,
